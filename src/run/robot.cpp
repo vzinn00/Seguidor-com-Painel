@@ -42,9 +42,14 @@ void Robot::begin()
     // Painel local: o celular conecta diretamente ao Wi-Fi criado pelo ESP32.
     configurarPainelWeb();
 
-    Serial.println("Robot pronto!");
+    Serial.println("Robot ready!");
+
     inicioPista = millis();
     pistaIniciada = true;
+
+    distanciaTotalMm = 0.0f;
+    distanciaInicialParada = 0.0f;
+    ultimoTempoDistancia = millis();
 }
 
 
@@ -79,13 +84,54 @@ void Robot::sincronizarEstado()
     }
     else
     {
-        // Nova sessao sem chamar calibrate().
+        // Nova sessão sem recalibrar os sensores.
         roboParado = false;
         pistaIniciada = true;
+
         inicioPista = millis();
+
         deteccoesDireita = 0;
+        contandoParada = false;
+
+        // Reinicia a medição de distância
+        distanciaTotalMm = 0.0f;
+        distanciaInicialParada = 0.0f;
+        ultimoTempoDistancia = millis();
+
         Serial.println("Seguidor ativado pelo painel; usando calibracao atual.");
     }
+}
+
+// =================================================
+// CALCULO DA DISTANCIA PERCORRIDA
+// =================================================
+
+void Robot::atualizarDistanciaPercorrida()
+{
+    unsigned long agora = millis();
+
+    float dt = (agora - ultimoTempoDistancia) / 1000.0f;
+
+    ultimoTempoDistancia = agora;
+
+    if (dt <= 0.0f)
+        return;
+
+    // Velocidade média das duas rodas
+    float rpmEsq = fabsf(sensoresRobot.getVelocidadeEsq());
+    float rpmDir = fabsf(sensoresRobot.getVelocidadeDir());
+
+    float rpmMedio = (rpmEsq + rpmDir) / 2.0f;
+
+    // Circunferência da roda
+    float circunferencia =
+        3.14159265f * DIAMETRO_RODA_MM;
+
+    // Distância percorrida no intervalo
+    float distancia =
+        (rpmMedio * circunferencia * dt) / 60.0f;
+
+    distanciaTotalMm += distancia;
 }
 
 // =================================================
@@ -120,6 +166,8 @@ void Robot::update()
         return;
     }
 
+    // Atualiza a distância percorrida pelos encoders
+    atualizarDistanciaPercorrida();
 
     // =================================================
     // SENSOR LATERAL DIREITO
@@ -143,22 +191,50 @@ void Robot::update()
         if (deteccoesDireita >= DETECCOES_NECESSARIAS)
         {
             inicioContagemParada = millis();
+
+            // Guarda a distância no momento da terceira detecção
+            distanciaInicialParada = distanciaTotalMm;
+
             contandoParada = true;
 
             Serial.println("3 DETECCOES! INICIANDO CONTAGEM PARA PARADA");
+
+            if (MODO_PARADA == ModoParada::DISTANCIA)
+            {
+                Serial.println("Modo de parada: DISTANCIA");
+            }
+            else
+            {
+                Serial.println("Modo de parada: TEMPO");
+            }
         }
     }
 
     direitaAnterior = direitaAtual;
 
     // =================================================
-    // CONTAGEM
+    // CONTAGEM PARA PARADA
     // =================================================
 
     if (contandoParada)
     {
-        if (millis() - inicioContagemParada >=
-            TEMPO_ATE_PARADA_MS)
+        bool deveParar = false;
+
+        if (MODO_PARADA == ModoParada::TEMPO)
+        {
+            deveParar =
+                millis() - inicioContagemParada >= TEMPO_ATE_PARADA_MS;
+        }
+        else if (MODO_PARADA == ModoParada::DISTANCIA)
+        {
+            float distanciaPercorrida =
+                distanciaTotalMm - distanciaInicialParada;
+
+            deveParar =
+                distanciaPercorrida >= DISTANCIA_ATE_PARADA_MM;
+        }
+
+        if (deveParar)
         {
             pararMotores();
 
@@ -244,15 +320,11 @@ void Robot::update()
 
     if (CONTROLE_ATUAL == CONTROLE_FUZZY)
     {
-        // O fuzzy precisa da variacao do erro.
         static int erroAnteriorFuzzy = 0;
 
-        int varErro =
-            erroAtual - erroAnteriorFuzzy;
+        int varErro = erroAtual - erroAnteriorFuzzy;
 
-        erroAnteriorFuzzy =
-            erroAtual;
-
+        erroAnteriorFuzzy = erroAtual;
 
         valoresFuzzy regras =
             controladorFuzzy.funcoes(
@@ -260,67 +332,118 @@ void Robot::update()
                 varErro
             );
 
-
         controladorDefuzzy.calcularPWM(
             regras,
             PWM_BASE
         );
 
+        pwmEsq = controladorDefuzzy.pwmEsq;
+        pwmDir = controladorDefuzzy.pwmDir;
 
-        pwmEsq =
-            controladorDefuzzy.pwmEsq;
-
-        pwmDir =
-            controladorDefuzzy.pwmDir;
-
-        correcao =
-            controladorDefuzzy.getCorrecao();
+        correcao = controladorDefuzzy.getCorrecao();
     }
 
 
     // =================================================
-    // PD
+    // PID EM CASCATA
     // =================================================
 
     else if (CONTROLE_ATUAL == CONTROLE_PID)
     {
+        unsigned long agora = millis();
+
+        float dt = (agora - ultimoControle) / 1000.0f;
+
+        // Executa somente quando houver uma nova janela
+        // de medição dos encoders.
+        if (dt * 1000.0f < INTERVALO_VELOCIDADE_MS)
+        {
+            return;
+        }
+
+        ultimoControle = agora;
+
+        // ---------------------------------------------
+        // 1. LEITURA DOS ENCODERS
+        // ---------------------------------------------
+
+        float velocidadeEsq =
+            sensoresRobot.getVelocidadeEsq();
+
+        float velocidadeDir =
+            sensoresRobot.getVelocidadeDir();
+
+
+        // ---------------------------------------------
+        // 2. CONTROLE DA LINHA
+        // ---------------------------------------------
+
         correcao =
-            controladorPID.calcular(
-                erroAtual
-            );
+            controladorLinha.calcular(erroAtual, dt);
 
 
-        // Correcao positiva:
-        //
-        // Esquerdo aumenta
-        // Direito diminui
-        //
-        // Correcao negativa:
-        //
-        // Esquerdo diminui
-        // Direito aumenta
+        // ---------------------------------------------
+        // 3. REFERÊNCIAS DE VELOCIDADE
+        // ---------------------------------------------
 
-        pwmEsq =
-            PWM_BASE + correcao;
+        float referenciaEsq =
+            VELOCIDADE_BASE_RPM + correcao;
 
-        pwmDir =
-            PWM_BASE - correcao;
+        float referenciaDir =
+            VELOCIDADE_BASE_RPM - correcao;
 
 
-        pwmEsq =
-            constrain(
-                pwmEsq,
-                0,
-                PWM_MAX
-            );
+        // Impede referências negativas
+        referenciaEsq = constrain(
+            referenciaEsq,
+            0,
+            VELOCIDADE_MAX_RPM
+        );
+
+        referenciaDir = constrain(
+            referenciaDir,
+            0,
+            VELOCIDADE_MAX_RPM
+        );
 
 
-        pwmDir =
-            constrain(
-                pwmDir,
-                0,
-                PWM_MAX
-            );
+        // ---------------------------------------------
+        // 4. ERRO DE VELOCIDADE
+        // ---------------------------------------------
+
+        float erroVelEsq =
+            referenciaEsq - velocidadeEsq;
+
+        float erroVelDir =
+            referenciaDir - velocidadeDir;
+
+
+        // ---------------------------------------------
+        // 5. CONTROLE INDIVIDUAL DOS MOTORES
+        // ---------------------------------------------
+
+        float correcaoPWMEsq =
+            controladorMotorEsq.calcular(erroVelEsq, dt);
+
+        float correcaoPWMDir =
+            controladorMotorDir.calcular(erroVelDir, dt);
+
+
+        // ---------------------------------------------
+        // 6. PWM FINAL
+        // ---------------------------------------------
+
+        pwmEsq = constrain(
+            PWM_BASE + correcaoPWMEsq,
+            0,
+            PWM_MAX
+        );
+
+        pwmDir = constrain(
+            PWM_BASE + correcaoPWMDir,
+            0,
+            PWM_MAX
+        );
     }
 
 

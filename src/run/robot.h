@@ -23,6 +23,12 @@ public:
     void setSeguidorAtivo(bool ativo);
 
 private:
+    // ALTERE AQUI O MODO DE PARADA
+    static constexpr ModoParada MODO_PARADA = ModoParada::DISTANCIA;
+    // Parada por tempo
+    static constexpr unsigned long TEMPO_ATE_PARADA_MS = 21000;
+    // Parada por distância
+    static constexpr float DISTANCIA_ATE_PARADA_MM = 1500.0f;
 
     static constexpr uint8_t LED_INTERNO = 22;
     
@@ -168,21 +174,43 @@ private:
     // PARADA
     // =================================================
 
+    // Escolha do critério de parada
+    enum class ModoParada
+    {
+        TEMPO,
+        DISTANCIA
+    };
+
+
+    // Parada por tempo
+    static constexpr unsigned long TEMPO_ATE_PARADA_MS = 21000;
+
+    // Parada por distância
+    static constexpr float DISTANCIA_ATE_PARADA_MM = 1500.0f;
+
+    // ATENÇÃO: coloque o diâmetro REAL da sua roda
+    static constexpr float DIAMETRO_RODA_MM = 65.0f;
+
+    // Detecção do sensor lateral
     int contadorDeteccoesDireita = 0;
 
     bool direitaAnterior = false;
     bool contandoParada = false;
     bool roboParado = false;
 
-    ;
-
     unsigned long inicioContagemParada = 0;
-    static constexpr unsigned long TEMPO_ATE_PARADA_MS = 600;
-    
+
+    // Medição de distância
+    float distanciaTotalMm = 0.0f;
+    float distanciaInicialParada = 0.0f;
+
+    unsigned long ultimoTempoDistancia = 0;
+
+    void atualizarDistanciaPercorrida();
+
+    // Controle da pista
     unsigned long inicioPista = 0;
     bool pistaIniciada = false;
 
     int deteccoesDireita = 0;
-    static constexpr int DETECCOES_NECESSARIAS = 3;
-    static constexpr unsigned long TEMPO_PISTA_MS = 16000;
 };

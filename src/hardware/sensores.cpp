@@ -7,13 +7,18 @@ volatile int32_t pulsosDistanciaEsq = 0;
 volatile int32_t pulsosDistanciaDir = 0;
 
 float distanciaInicial = 0.0f;
+portMUX_TYPE encoderMux = portMUX_INITIALIZER_UNLOCKED;
 
 void IRAM_ATTR encoderEsqISR()
 {
     // C1 sofreu uma borda de subida.
     //
     // C2 determina o sentido.
-    if (digitalRead(esqC2))
+    bool sentido = digitalRead(esqC2);
+
+    portENTER_CRITICAL_ISR(&encoderMux);
+
+    if (sentido)
     {
         pulsosEsq++;
         pulsosDistanciaEsq++;
@@ -23,6 +28,8 @@ void IRAM_ATTR encoderEsqISR()
         pulsosEsq--;
         pulsosDistanciaEsq--;
     }
+
+    portEXIT_CRITICAL_ISR(&encoderMux);
 }
 
 
@@ -31,7 +38,12 @@ void IRAM_ATTR encoderDirISR()
     // C1 sofreu uma borda de subida.
     //
     // C2 determina o sentido.
-    if (digitalRead(dirC2))
+    
+    bool sentido = digitalRead(dirC2);
+
+    portENTER_CRITICAL_ISR(&encoderMux);
+
+    if (sentido)
     {
         pulsosDir++;
         pulsosDistanciaDir++;
@@ -41,6 +53,8 @@ void IRAM_ATTR encoderDirISR()
         pulsosDir--;
         pulsosDistanciaDir--;
     }
+
+    portEXIT_CRITICAL_ISR(&encoderMux);
 }
 
 void sensores::begin()
@@ -193,12 +207,11 @@ void sensores::atualizarVelocidade()
 
 
     float voltasEsq =
-        pulsosEsqAtual /
+        (float)pulsosEsqAtual /
         ENCODER_PULSOS_POR_VOLTA;
 
-
     float voltasDir =
-        pulsosDirAtual /
+        (float)pulsosDirAtual /
         ENCODER_PULSOS_POR_VOLTA;
 
 
@@ -321,36 +334,36 @@ float sensores::getDistanciaEsqMm() const
 {
     int32_t pulsos;
 
-    noInterrupts();
+    portENTER_CRITICAL(&encoderMux);
     pulsos = pulsosDistanciaEsq;
-    interrupts();
+    portEXIT_CRITICAL(&encoderMux);
 
     float circunferencia = PI * DIAMETRO_RODA_MM;
 
-    return (pulsos / ENCODER_PULSOS_POR_VOLTA) * circunferencia;
+    return ((float)pulsos / ENCODER_PULSOS_POR_VOLTA) * circunferencia;
 }
 
 float sensores::getDistanciaDirMm() const
 {
     int32_t pulsos;
 
-    noInterrupts();
+    portENTER_CRITICAL(&encoderMux);
     pulsos = pulsosDistanciaDir;
-    interrupts();
+    portEXIT_CRITICAL(&encoderMux);
 
     float circunferencia = PI * DIAMETRO_RODA_MM;
 
-    return (pulsos / ENCODER_PULSOS_POR_VOLTA) * circunferencia;
+    return ((float)pulsos / ENCODER_PULSOS_POR_VOLTA) * circunferencia;
 }
 
 void sensores::zerarDistancia()
 {
-    noInterrupts();
+    portENTER_CRITICAL(&encoderMux);
 
     pulsosDistanciaEsq = 0;
     pulsosDistanciaDir = 0;
 
-    interrupts();
+    portEXIT_CRITICAL(&encoderMux);
 }
 
 int sensores::getLeituraDireita() const

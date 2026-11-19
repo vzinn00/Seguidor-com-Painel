@@ -7,13 +7,21 @@ class PID
 {
 private:
     float kp;
+    float ki;
     float kd;
+
     float erroAnterior;
+    float integral;
+
+    float saidaMin;
+    float saidaMax;
 
 public:
-    PID(float kp, float kd);
+    PID(float kp, float ki, float kd,
+        float saidaMin, float saidaMax);
 
-    float calcular(float erro);
+    float calcular(float erro, float dt);
+
     void reset();
 };
 
