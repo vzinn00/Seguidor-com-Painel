@@ -191,7 +191,7 @@ void sensores::atualizarVelocidade()
     int32_t pulsosEsqAtual;
     int32_t pulsosDirAtual;
 
-    noInterrupts();
+    portENTER_CRITICAL(&encoderMux);
 
     pulsosEsqAtual = pulsosEsq;
     pulsosDirAtual = pulsosDir;
@@ -199,7 +199,7 @@ void sensores::atualizarVelocidade()
     pulsosEsq = 0;
     pulsosDir = 0;
 
-    interrupts();
+    portEXIT_CRITICAL(&encoderMux);
 
     // CONVERSÃO PARA RPM
     float intervaloSegundos =
@@ -305,11 +305,13 @@ const uint16_t* sensores::getValues() const
 // LINHA DETECTADA
 bool sensores::linhaDetectada() const
 {
-    const uint16_t LIMIAR_LINHA = 900;
+    // readLineBlack() usa valores calibrados: preto tende a 1000 e branco a 0.
+    // O limiar deve ser ajustado após observar as leituras reais.
+    const uint16_t LIMIAR_LINHA = 200;
 
     for (int i = 0; i < NUM_SENSORS; i++)
     {
-        if (sensorValues[i] < LIMIAR_LINHA)
+        if (sensorValues[i] > LIMIAR_LINHA)
         {
             return true;
         }
@@ -362,8 +364,13 @@ void sensores::zerarDistancia()
 
     pulsosDistanciaEsq = 0;
     pulsosDistanciaDir = 0;
+    pulsosEsq = 0;
+    pulsosDir = 0;
 
     portEXIT_CRITICAL(&encoderMux);
+
+    velEsq = 0.0f;
+    velDir = 0.0f;
 }
 
 int sensores::getLeituraDireita() const

@@ -14,7 +14,7 @@
 #define ENCODER_PULSOS_POR_VOLTA 72.0f
 #define INTERVALO_VELOCIDADE_MS 20
 
-#define DIAMETRO_RODA_MM 22.0f
+#define DIAMETRO_RODA_MM 65.0f // Ajustar para o diâmetro real da roda
 
 class sensores
 {
@@ -49,15 +49,12 @@ public:
 
 private:
     QTRSensors qtr;
-    uint16_t sensorValues[NUM_SENSORS];
-    uint16_t sensoresLaterais[2];
-    bool detectDireita;
-    bool detectEsquerda;
-    float velDir, velEsq;
+    uint16_t sensorValues[NUM_SENSORS] = {};
+    uint16_t sensoresLaterais[2] = {};
+    bool detectDireita = false;
+    bool detectEsquerda = false;
+    float velDir = 0.0f;
+    float velEsq = 0.0f;
     int erro = 0;
     int thersholdDirMin = 4095, thersholdDirMax = 0, thersholdEsqMin = 4095, thersholdEsqMax = 0;
-    volatile uint32_t pulsosEsq = 0;
-    volatile uint32_t pulsosDir = 0;
-    int32_t pulsosDistanciaEsq = 0;
-    int32_t pulsosDistanciaDir = 0;
 };

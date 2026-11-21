@@ -30,6 +30,11 @@ void Robot::begin()
 
     sensoresRobot.calibrate(TEMPO_CALIBRACAO);
 
+    // Não contabiliza os pulsos acumulados durante o giro de calibração.
+    sensoresRobot.zerarDistancia();
+    ultimaDistanciaEsqMm = 0.0f;
+    ultimaDistanciaDirMm = 0.0f;
+
     pararMotores();
 
 
@@ -37,7 +42,9 @@ void Robot::begin()
     // CONTROLE
     // =================================================
 
-    controladorPID.reset();
+    controladorTrajetoria.reset();
+    controladorVelEsq.reset();
+    controladorVelDir.reset();
 
     // Painel local: o celular conecta diretamente ao Wi-Fi criado pelo ESP32.
     configurarPainelWeb();
@@ -49,7 +56,10 @@ void Robot::begin()
 
     distanciaTotalMm = 0.0f;
     distanciaInicialParada = 0.0f;
-    ultimoTempoDistancia = millis();
+    sensoresRobot.zerarDistancia();
+    ultimaDistanciaEsqMm = 0.0f;
+    ultimaDistanciaDirMm = 0.0f;
+    ultimoControle = millis();
 }
 
 
@@ -70,7 +80,9 @@ void Robot::sincronizarEstado()
 
     digitalWrite(LED_INTERNO, ativo ? HIGH : LOW);
 
-    controladorPID.reset();
+    controladorTrajetoria.reset();
+    controladorVelEsq.reset();
+    controladorVelDir.reset();
     linhaPerdida = false;
     ultimoPwmEsq = 0;
     ultimoPwmDir = 0;
@@ -96,7 +108,10 @@ void Robot::sincronizarEstado()
         // Reinicia a medição de distância
         distanciaTotalMm = 0.0f;
         distanciaInicialParada = 0.0f;
-        ultimoTempoDistancia = millis();
+        sensoresRobot.zerarDistancia();
+        ultimaDistanciaEsqMm = 0.0f;
+        ultimaDistanciaDirMm = 0.0f;
+        ultimoControle = millis();
 
         Serial.println("Seguidor ativado pelo painel; usando calibracao atual.");
     }
@@ -108,30 +123,19 @@ void Robot::sincronizarEstado()
 
 void Robot::atualizarDistanciaPercorrida()
 {
-    unsigned long agora = millis();
+    // Integra o deslocamento assinado dos dois encoders.
+    // A média assinada evita contabilizar uma rotação no próprio eixo
+    // como se fosse deslocamento longitudinal.
+    const float distanciaEsq = sensoresRobot.getDistanciaEsqMm();
+    const float distanciaDir = sensoresRobot.getDistanciaDirMm();
 
-    float dt = (agora - ultimoTempoDistancia) / 1000.0f;
+    const float deltaEsq = distanciaEsq - ultimaDistanciaEsqMm;
+    const float deltaDir = distanciaDir - ultimaDistanciaDirMm;
 
-    ultimoTempoDistancia = agora;
+    ultimaDistanciaEsqMm = distanciaEsq;
+    ultimaDistanciaDirMm = distanciaDir;
 
-    if (dt <= 0.0f)
-        return;
-
-    // Velocidade média das duas rodas
-    float rpmEsq = fabsf(sensoresRobot.getVelocidadeEsq());
-    float rpmDir = fabsf(sensoresRobot.getVelocidadeDir());
-
-    float rpmMedio = (rpmEsq + rpmDir) / 2.0f;
-
-    // Circunferência da roda
-    float circunferencia =
-        3.14159265f * DIAMETRO_RODA_MM;
-
-    // Distância percorrida no intervalo
-    float distancia =
-        (rpmMedio * circunferencia * dt) / 60.0f;
-
-    distanciaTotalMm += distancia;
+    distanciaTotalMm += (deltaEsq + deltaDir) * 0.5f;
 }
 
 // =================================================
@@ -282,7 +286,9 @@ void Robot::update()
         // Linha nao recuperada
         pararMotores();
 
-        controladorPID.reset();
+        controladorTrajetoria.reset();
+    controladorVelEsq.reset();
+    controladorVelDir.reset();
 
         Serial.println(
             "LINHA NAO RECUPERADA! MOTORES PARADOS."
@@ -379,7 +385,7 @@ void Robot::update()
         // ---------------------------------------------
 
         correcao =
-            controladorLinha.calcular(erroAtual, dt);
+            controladorTrajetoria.calcular(erroAtual, dt);
 
 
         // ---------------------------------------------
@@ -387,23 +393,23 @@ void Robot::update()
         // ---------------------------------------------
 
         float referenciaEsq =
-            VELOCIDADE_BASE_RPM + correcao;
+            RPM_BASE + correcao;
 
         float referenciaDir =
-            VELOCIDADE_BASE_RPM - correcao;
+            RPM_BASE - correcao;
 
 
         // Impede referências negativas
         referenciaEsq = constrain(
             referenciaEsq,
             0,
-            VELOCIDADE_MAX_RPM
+            RPM_MAXIMO_PWM255
         );
 
         referenciaDir = constrain(
             referenciaDir,
             0,
-            VELOCIDADE_MAX_RPM
+            RPM_MAXIMO_PWM255
         );
 
 
@@ -423,10 +429,10 @@ void Robot::update()
         // ---------------------------------------------
 
         float correcaoPWMEsq =
-            controladorMotorEsq.calcular(erroVelEsq, dt);
+            controladorVelEsq.calcular(erroVelEsq, dt);
 
         float correcaoPWMDir =
-            controladorMotorDir.calcular(erroVelDir, dt);
+            controladorVelDir.calcular(erroVelDir, dt);
 
 
         // ---------------------------------------------
@@ -563,30 +569,17 @@ void Robot::configurarMotores()
 
 
     // PWM
-    ledcSetup(
-        PWM_CHANNEL_A,
-        PWM_FREQ,
-        PWM_RES
-    );
+    // API compatível com Arduino-ESP32 2.x (framework usado pelo PlatformIO).
+    // Cada pino PWM é associado a um canal LEDC, e as escritas usam o canal.
+    const bool pwmEsqOk = ledcSetup(PWM_CHANNEL_A, PWM_FREQ, PWM_RES) > 0;
+    const bool pwmDirOk = ledcSetup(PWM_CHANNEL_B, PWM_FREQ, PWM_RES) > 0;
+    ledcAttachPin(PWMA, PWM_CHANNEL_A);
+    ledcAttachPin(PWMB, PWM_CHANNEL_B);
 
-
-    ledcSetup(
-        PWM_CHANNEL_B,
-        PWM_FREQ,
-        PWM_RES
-    );
-
-
-    ledcAttachPin(
-        PWMA,
-        PWM_CHANNEL_A
-    );
-
-
-    ledcAttachPin(
-        PWMB,
-        PWM_CHANNEL_B
-    );
+    if (!pwmEsqOk || !pwmDirOk)
+    {
+        Serial.println("ERRO: falha ao configurar canais PWM LEDC.");
+    }
 
 
     // Sentido para frente
@@ -599,16 +592,8 @@ void Robot::configurarMotores()
 
 
     // Comeca parado
-    ledcWrite(
-        PWM_CHANNEL_A,
-        0
-    );
-
-
-    ledcWrite(
-        PWM_CHANNEL_B,
-        0
-    );
+    ledcWrite(PWM_CHANNEL_A, 0);
+    ledcWrite(PWM_CHANNEL_B, 0);
 }
 
 
@@ -638,10 +623,7 @@ void Robot::motorEsquerdo(int pwm)
     );
 
 
-    ledcWrite(
-        PWM_CHANNEL_A,
-        pwm
-    );
+    ledcWrite(PWM_CHANNEL_A, pwm);
 }
 
 
@@ -671,10 +653,7 @@ void Robot::motorDireito(int pwm)
     );
 
 
-    ledcWrite(
-        PWM_CHANNEL_B,
-        pwm
-    );
+    ledcWrite(PWM_CHANNEL_B, pwm);
 }
 
 
@@ -684,36 +663,15 @@ void Robot::motorDireito(int pwm)
 
 void Robot::giroCalib()
 {
-    digitalWrite(
-        AIN1,
-        LOW
-    );
+    // Giro no próprio eixo: roda esquerda para trás e direita para frente.
+    // Inverta os sentidos abaixo caso a montagem mecânica esteja espelhada.
+    digitalWrite(AIN1, LOW);
+    digitalWrite(AIN2, HIGH);
+    ledcWrite(PWM_CHANNEL_A, 180);
 
-    digitalWrite(
-        AIN2,
-        LOW
-    );
-
-    ledcWrite(
-        PWM_CHANNEL_A,
-        180
-    );
-
-
-    digitalWrite(
-        BIN1,
-        LOW
-    );
-
-    digitalWrite(
-        BIN2,
-        LOW
-    );
-
-    ledcWrite(
-        PWM_CHANNEL_B,
-        180
-    );
+    digitalWrite(BIN1, HIGH);
+    digitalWrite(BIN2, LOW);
+    ledcWrite(PWM_CHANNEL_B, 180);
 }
 
 
@@ -735,10 +693,7 @@ void Robot::pararMotores()
         HIGH
     );
 
-    ledcWrite(
-        PWM_CHANNEL_A,
-        0
-    );
+    ledcWrite(PWM_CHANNEL_A, 0);
 
 
     digitalWrite(
@@ -751,10 +706,7 @@ void Robot::pararMotores()
         HIGH
     );
 
-    ledcWrite(
-        PWM_CHANNEL_B,
-        0
-    );
+    ledcWrite(PWM_CHANNEL_B, 0);
 }
 
 // =================================================

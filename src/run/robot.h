@@ -9,11 +9,9 @@
 #include "control/fuzzy/defuzzy.h"
 #include "control/pid/pid.h"
 
-#define PWM_MAX 255
-
-// RPM medido pelo encoder quando o motor roda com PWM 255 (sem carga ou na pista).
-// Usado para converter o RPM dos encoders para a escala 0-255 do PWM.
-#define RPM_MAXIMO_PWM255 2250.0f
+// Configurações compartilhadas pelo controle e pelo painel.
+static constexpr int PWM_MAX = 255;
+static constexpr float RPM_MAXIMO_PWM255 = 2250.0f;
 
 class Robot
 {
@@ -40,6 +38,26 @@ private:
 
     static constexpr uint8_t LED_INTERNO = 22;
     
+    // =================================================
+    // CONFIGURACAO DO CONTROLE
+    // =================================================
+
+    static constexpr float RPM_BASE = 800.0f;
+    static constexpr float RPM_CORRECAO_MAX = 500.0f;
+    static constexpr float PWM_BASE = 90.0f;
+    static constexpr float PWM_CORRECAO_MAX = 100.0f;
+
+    static constexpr float PID_KP_TRAJETORIA = 0.51f;
+    static constexpr float PID_KD_TRAJETORIA = 0.018f;
+
+    static constexpr float PID_KP_VELOCIDADE = 0.08f;
+    static constexpr float PID_KI_VELOCIDADE = 0.5f;
+
+
+    // Configure o atraso desejado antes de começar a contar as marcas laterais.
+    static constexpr unsigned long TEMPO_PISTA_MS = 0;
+    static constexpr int DETECCOES_NECESSARIAS = 3;
+
     // =================================================
     // MODULOS
     // =================================================
@@ -113,26 +131,6 @@ private:
     // CONTROLE
     // =================================================
 
-    #define PWM_MAX 255
-
-    // Velocidade máxima teórica de saída
-    #define RPM_MAXIMO_PWM255 2250.0f
-
-    // Velocidade de referência inicial
-    #define RPM_BASE 800.0f
-
-    // Limites das correções
-    #define RPM_CORRECAO_MAX 500.0f
-    #define PWM_CORRECAO_MAX 100.0f
-
-    // Ganhos do PD de trajetória
-    #define PID_KP_TRAJETORIA 0.51f
-    #define PID_KD_TRAJETORIA 0.018f
-
-    // Ganhos iniciais dos PI de velocidade
-    #define PID_KP_VELOCIDADE 0.08f
-    #define PID_KI_VELOCIDADE 0.5f
-    
     unsigned long ultimoControle = 0;
 
     //Funcionou com 150 0.058 0.1
@@ -224,12 +222,7 @@ private:
     // =================================================
 
 
-    // ATENÇÃO: coloque o diâmetro REAL da sua roda
-    static constexpr float DIAMETRO_RODA_MM = 65.0f;
-
     // Detecção do sensor lateral
-    int contadorDeteccoesDireita = 0;
-
     bool direitaAnterior = false;
     bool contandoParada = false;
     bool roboParado = false;
@@ -239,8 +232,8 @@ private:
     // Medição de distância
     float distanciaTotalMm = 0.0f;
     float distanciaInicialParada = 0.0f;
-
-    unsigned long ultimoTempoDistancia = 0;
+    float ultimaDistanciaEsqMm = 0.0f;
+    float ultimaDistanciaDirMm = 0.0f;
 
     void atualizarDistanciaPercorrida();
 
