@@ -12,8 +12,8 @@
 #define PWM_MAX 255
 
 // RPM medido pelo encoder quando o motor roda com PWM 255 (sem carga ou na pista).
-// Usado para converter o RPM dos encoders para a escala 0-255 do PWM. AJUSTE para o seu motor.
-#define RPM_MAXIMO_PWM255 500.0f
+// Usado para converter o RPM dos encoders para a escala 0-255 do PWM.
+#define RPM_MAXIMO_PWM255 2250.0f
 
 class Robot
 {
@@ -23,6 +23,14 @@ public:
     void setSeguidorAtivo(bool ativo);
 
 private:
+
+    // Escolha do critério de parada
+    enum class ModoParada
+    {
+        TEMPO,
+        DISTANCIA
+    };
+
     // ALTERE AQUI O MODO DE PARADA
     static constexpr ModoParada MODO_PARADA = ModoParada::DISTANCIA;
     // Parada por tempo
@@ -47,7 +55,31 @@ private:
     fuzzy controladorFuzzy;
     defuzzy controladorDefuzzy;
 
-    PID controladorPID{PID_KP, PID_KD};
+    // PD responsável pelo seguimento da linha
+    PID controladorTrajetoria{
+        PID_KP_TRAJETORIA,
+        0.0f,
+        PID_KD_TRAJETORIA,
+        -RPM_CORRECAO_MAX,
+        RPM_CORRECAO_MAX
+    };
+
+    // PI responsável pela velocidade dos motores
+    PID controladorVelEsq{
+        PID_KP_VELOCIDADE,
+        PID_KI_VELOCIDADE,
+        0.0f,
+        -PWM_CORRECAO_MAX,
+        PWM_CORRECAO_MAX
+    };
+
+    PID controladorVelDir{
+        PID_KP_VELOCIDADE,
+        PID_KI_VELOCIDADE,
+        0.0f,
+        -PWM_CORRECAO_MAX,
+        PWM_CORRECAO_MAX
+    };
 
 
     // =================================================
@@ -81,10 +113,27 @@ private:
     // CONTROLE
     // =================================================
 
-    static constexpr float PWM_BASE = 90.0f;//150.0
+    #define PWM_MAX 255
 
-    static constexpr float PID_KP = 0.058f;//0.06
-    static constexpr float PID_KD = 0.1f;//0.3
+    // Velocidade máxima teórica de saída
+    #define RPM_MAXIMO_PWM255 2250.0f
+
+    // Velocidade de referência inicial
+    #define RPM_BASE 800.0f
+
+    // Limites das correções
+    #define RPM_CORRECAO_MAX 500.0f
+    #define PWM_CORRECAO_MAX 100.0f
+
+    // Ganhos do PD de trajetória
+    #define PID_KP_TRAJETORIA 0.51f
+    #define PID_KD_TRAJETORIA 0.018f
+
+    // Ganhos iniciais dos PI de velocidade
+    #define PID_KP_VELOCIDADE 0.08f
+    #define PID_KI_VELOCIDADE 0.5f
+    
+    unsigned long ultimoControle = 0;
 
     //Funcionou com 150 0.058 0.1
     //Funcionou com 180 0.078 0.2
@@ -174,19 +223,6 @@ private:
     // PARADA
     // =================================================
 
-    // Escolha do critério de parada
-    enum class ModoParada
-    {
-        TEMPO,
-        DISTANCIA
-    };
-
-
-    // Parada por tempo
-    static constexpr unsigned long TEMPO_ATE_PARADA_MS = 21000;
-
-    // Parada por distância
-    static constexpr float DISTANCIA_ATE_PARADA_MM = 1500.0f;
 
     // ATENÇÃO: coloque o diâmetro REAL da sua roda
     static constexpr float DIAMETRO_RODA_MM = 65.0f;
